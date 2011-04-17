@@ -1,0 +1,26 @@
+srvr is a simple script to run a web server on a given port from the current directory.
+
+I needed to test a simple template but didn't want to mess with moving it to ~/Sites/ or upload it to my server or put it WEBrick server due to the memory usage, and short of all that I couldn't find a simple solution.
+
+To install, simply copy the srvr script to /usr/local/bin and chmod 0755 srvr. An example use might be:
+
+    cd ~/Desktop/collections
+    srvr
+    ... coding and testing for a while
+    srvr --kill
+
+Full options are listed below:
+
+    usage: srvr [OPTIONS]
+    
+    options [and defaults] are:
+      -p | --port            the port to run the current server on, port 8000 by default
+      -s | --server          which server to setup, lighttpd is used by default
+      -k | --kill            stops any currently running srvr servers
+                                 lighttpd, nginx, cherokee
+      -i | --install         installs almost everything needed to get a server running
+      -d | --doctor          checks for missing dependencies and other issues
+      -h | --help            shows this help screen
+      -v | --version         shows srvr version
+
+Any help making the configs better would be appreciated, it should be enough to get running; I didn't focus on adding any advanced functionality or support for PHP but it shouldn't be too hard and I may add it in the future.

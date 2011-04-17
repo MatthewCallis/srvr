@@ -1,0 +1,879 @@
+#!/bin/bash
+# Copyright (c) 2011 Matthew Callis <matthew.callis@gmail.com>
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+###############################################################################
+# Variables and Such
+###############################################################################
+PROJECT="srvr";
+VERSION="0.1";
+CURRENT_FILE=`basename $0`;
+
+CC="gcc";
+LD="\$(CC)";
+
+PLATFORM=;
+PLATFORM_VERSION=;
+CC_VERSION=;
+
+PORT="8000";
+SERVER="lighttpd";
+
+HAVE_XCODE=0;
+XCODE_VERSION=;
+
+HAVE_MACPORTS=0;
+MACPORTS_VERSION=;
+
+HAVE_HOMEBREW=0;
+HOMEBREW_VERSION=;
+
+HAVE_GIT=0;
+GIT_VERSION=;
+
+HAVE_LIGHTTPD=0;
+LIGHTTPD_VERSION=;
+LIGHTTPD_CONFIG="";
+
+HAVE_NGINX=0;
+NGINX_VERSION=;
+NGINX_CONGIF="";
+
+HAVE_CHEROKEE=0;
+CHEROKEE_VERSION=;
+CHEROKEE_CONFIG="";
+
+
+###############################################################################
+# Style Functions
+###############################################################################
+# Figure out the right things to pass to echo to supress a newline
+if [ "`echo -n`" = "-n" ]; then
+	n=""; c="\c";
+else
+	n="-n"; c="";
+fi
+
+_echo(){
+	# portable (sysv/bsd) echo -n
+	if [ $1 = "-n" ]; then
+		shift;
+		echo $n "$*" $c;
+	else
+		echo "$*";
+	fi
+}
+
+echo_n(){
+	_echo -n "$*";
+}
+
+# color and text styles
+att(){
+	if [ $# -eq 0 ]; then
+		echo -ne "\033[0m";
+		return 0;
+	fi
+
+	echo -ne "\033["
+	while [ $# -ge 1 ]; do
+		case $1 in
+			bold)      C=1;;
+			underline) C=4;;
+			hidden)    C=8;;
+
+			black)     C=30;;
+			red)       C=31;;
+			green)     C=32;;
+			yellow)    C=33;;
+			blue)      C=34;;
+			magenta)   C=35;;
+			cyan)      C=36;;
+			white)     C=37;;
+
+			reset)
+				echo -ne "0m";
+				return 0;
+		esac
+
+		echo -ne "$C"
+
+		if [ $# -ge 2 ]; then
+			echo -ne ";";
+		fi
+
+		shift;
+	done;
+	echo -ne "m";
+}
+
+style_project (){ att magenta bold; _echo $*; att; }
+style_special (){ att cyan; _echo $*; att; }
+style_success (){ att green; _echo $*; att; }
+style_warning (){ att yellow bold; echo $*; att; }
+style_error   (){ att red bold; _echo $*; att; }
+style_link    (){ att blue bold underline; _echo $*; att; }
+
+###############################################################################
+# Functions
+###############################################################################
+# Feature Test Commands
+try_command(){
+	if $* > /dev/null 2> /dev/null; then
+		return 0;
+	else
+		return 1;
+	fi
+}
+
+# Try to compile code example and run the output for test
+compile_and_run(){
+	FILE=$1
+	shift;
+
+	CMD="$CC $CFLAGS $LDFLAGS $* .conftests/$FILE.c -o .conftests/$FILE"
+	try_command $CMD;
+	RET=$?;
+
+	rm -f .conftests/$FILE.c;
+
+	[ $RET -ne 0 ] && return 1;
+
+	CMD="./.conftests/$FILE";
+	try_command $CMD;
+	RET=$?;
+
+	rm -f .conftests/$FILE;
+
+	[ $RET -ne 0 ] && return 2;
+	return 0;
+}
+
+# Show the usage text
+usage(){
+	echo ""
+	echo "  usage: ${PROJECT} [OPTIONS]"
+	echo ""
+	echo "  options [and defaults] are:"
+	echo "    -p | --port            the port to run the current server on, port 8000 by default"
+	echo "    -s | --server          which server to setup, lighttpd is used by default"
+	echo "    -k | --kill            stops any currently running ${PROJECT} servers"
+	echo "                               lighttpd, nginx, cherokee"
+	# , cherokee, jetty, yaws"
+	echo "    -i | --install         installs almost everything needed to get a server running"
+	echo "    -d | --doctor          checks for missing dependencies and other issues"
+	echo "    -h | --help            shows this help screen"
+	echo "    -v | --version         shows ${PROJECT} version"
+	echo ""
+}
+
+# Attempt to install missing dependencies
+install(){
+	att bold;
+	echo_n "  installing missing dependencies";
+	att;
+
+	check_homebrew;
+	check_git;
+	check_lighttpd;
+	check_nginx;
+	check_cherokee;
+
+	if [ $HAVE_HOMEBREW -ne 1 ] ; then
+		echo_n "    installing homebrew...        ";
+		install_homebrew;
+		if check_homebrew; then
+			style_success "homebrew $HOMEBREW_VERSION";
+		else
+			style_error   "install failed";
+		fi
+	fi
+	if [ $HAVE_GIT -ne 1 ] ; then
+		echo_n "    installing git...             ";
+		brew install git > /dev/null 2>&1;
+		if check_git; then
+			style_success "git $GIT_VERSION";
+		else
+			style_error   "install failed";
+		fi
+	fi
+	if [ $HAVE_LIGHTTPD -ne 1 ] ; then
+		echo_n "    installing lighttpd...        ";
+		brew install lighttpd > /dev/null 2>&1;
+		if check_lighttpd; then
+			style_success "lighttpd $LIGHTTPD_VERSION";
+		else
+			style_error   "install failed";
+		fi
+	fi
+	if [ $HAVE_NGINX -ne 1 ] ; then
+		echo_n "    installing nginx...           ";
+		brew install nginx > /dev/null 2>&1;
+		if check_nginx; then
+			style_success "nginx $NGINX_VERSION";
+		else
+			style_error   "install failed";
+		fi
+	fi
+
+	if [ $HAVE_CHEROKEE -ne 1 ] ; then
+		echo_n "    installing cherokee...        ";
+		brew install cherokee > /dev/null 2>&1;
+		if check_cherokee; then
+			style_success "cherokee $CHEROKEE_VERSION";
+		else
+			style_error   "install failed";
+		fi
+	fi
+
+	att bold;
+	echo "";
+	echo_n "  all done!";
+	echo "";
+	att;
+	return 0;
+}
+
+# Check for various  enviroment issues for better bug reports.
+doctor(){
+	att bold;
+	echo_n "  checking your enviroment for "; style_project -n $PROJECT; att; att bold; echo_n " version "; style_special $VERSION;
+	att;
+
+	# Checking Platform
+	get_platform;
+	echo_n "    checking platform:            ";
+	PLATFORM=`echo $PLATFORM | tr A-Z a-z`
+	style_success "$PLATFORM $PLATFORM_VERSION"
+
+	# Check for GCC
+	echo_n "    checking for gcc:             ";
+	if check_gcc; then
+		style_success "gcc $CC_VERSION";
+	else
+		style_error "no gcc :(";
+
+		echo   "";
+		echo   "  I couldn't find gcc on your system! you will need it to compile things needed for ${PROJECT}.";
+		echo_n "  If you're on "; style_special -n "Ubuntu"; echo_n ", make sure to grab the "; style_project -n "build-essential"; echo " package.";
+		echo   "  On Mac OS X, you'll need to install the Xcode developer tools or MacPorts.";
+		echo   "";
+	fi
+
+	# Check for XCode
+	echo_n "    checking for xcode:           ";
+	if check_xcode; then
+		style_success "xcode $XCODE_VERSION";
+	else
+		style_error "no, you'll need to install all 4GB of it then, suck for you"
+	fi
+	# Check for MacPorts
+	echo_n "    checking for macports:        ";
+	if check_macports; then
+		style_success "macports $MACPORTS_VERSION";
+	else
+		style_warning "no, you'll need Homebrew then"
+	fi
+	# Check for Homebrew
+	echo_n "    checking for homebrew:        ";
+	if check_homebrew; then
+		style_success "homebrew $HOMEBREW_VERSION";
+	else
+		style_warning "no, you'll need MacPorts then"
+	fi
+
+	# Check for git
+	echo_n "    checking for git:             ";
+	if check_git; then
+		style_success "git $GIT_VERSION";
+	else
+		style_warning "no, you'll be needing that"
+	fi
+
+	# Check for lighttpd
+	echo_n "    checking for lighttpd:        ";
+	if check_lighttpd; then
+		style_success "lighttpd $LIGHTTPD_VERSION";
+	else
+		style_warning "no, you'll need nginx or cherokee then"
+	fi
+
+	# Check for nginx
+	echo_n "    checking for nginx:           ";
+	if check_nginx; then
+		style_success "nginx $NGINX_VERSION";
+	else
+		style_warning "no, you'll need lighttpd or cherokee then"
+	fi
+
+	# Check for Cherokee
+	echo_n "    checking for cherokee:        ";
+	if check_cherokee; then
+		style_success "cherokee $CHEROKEE_VERSION";
+	else
+		style_warning "no, you'll need lighttpd or nginx then"
+	fi
+
+	echo "";
+	echo_n "  run "; style_project -n "${CURRENT_FILE} --install"; echo " to install missing dependencies.";
+	echo "";
+
+	return 0;
+}
+
+###############################################################################
+# Server Tasks
+###############################################################################
+start_lighttpd(){
+	LIGHTTPD_CONFIG="server.bind          = \"0.0.0.0\"
+server.port          = ${PORT}
+server.document-root = CWD
+
+index-file.names = ( \"index.php\", \"index.html\", \"index.htm\", \"default.htm\" )
+
+mimetype.assign = (
+	\".htm\"  =>  \"text/html\",
+	\".html\" =>  \"text/html'\",
+	\".css\"  =>  \"text/css\",
+	\".gif\"  =>  \"image/gif\",
+	\".jpeg\" =>  \"image/jpeg\",
+	\".jpg\"  =>  \"image/jpeg\",
+	\".png\"  =>  \"image/png\",
+	\".js\"   =>  \"text/javascript\",
+	\".swf\"  =>  \"application/x-shockwave-flash\",
+	\".txt\"  =>  \"text/plain\"
+)
+
+# Making sure file uploads above 64k always work when using IE or Safari
+# For more information, see http://trac.lighttpd.net/trac/ticket/360
+\$HTTP[\"useragent\"] =~ \"^(.*MSIE.*)|(.*AppleWebKit.*)$\" {
+	server.max-keep-alive-requests = 0
+}";
+
+	echo "${LIGHTTPD_CONFIG}"> "${PWD}/srvr.lighttpd.conf";
+
+	lighttpd -f "${PWD}/srvr.lighttpd.conf";
+
+	open "http://localhost:${PORT}/";
+
+	return 0;
+}
+
+start_nginx(){
+	NGINX_CONFIG="events {
+		worker_connections 1024;
+	}
+http {
+	index index.htm index.php index.html default.htm;
+	include /usr/local/etc/nginx/mime.types;
+	server {
+		listen ${PORT};
+		root ${PWD};
+		location / { 
+			# Rewrite rules and other criterias can go here
+			# Remember to avoid using if() where possible (http://wiki.nginx.org/IfIsEvil)
+		}
+		# This block will catch static file requests, such as images, css, js
+		# The ?: prefix is a 'non-capturing' mark, meaning we do not require
+		# the pattern to be captured into $1 which should help improve performance
+		location ~* \.(?:ico|css|js|gif|jpe?g|png)$ {
+			# Some basic cache-control for static files to be sent to the browser
+			expires max;
+			add_header Pragma public;
+			add_header Cache-Control \"public, must-revalidate, proxy-revalidate\";
+		}
+	}
+}";
+
+	echo "${NGINX_CONFIG}"> "${PWD}/srvr.nginx.conf";
+	nginx -c "${PWD}/srvr.nginx.conf";
+
+	open "http://localhost:${PORT}/";
+
+	return 0;
+}
+
+start_cherokee(){
+	CHEROKEE_CONFIG="config!version = 001002001
+server!bind!1!port = ${PORT}
+server!keepalive = 1
+server!server_tokens = full
+server!keepalive_max_requests = 500
+server!timeout = 15
+vserver!1!directory_index = index.htm,index.html,index.php,index.aspx,default.aspx
+vserver!1!document_root = ${PWD}
+vserver!1!nick = default
+mime!application/bzip2!extensions = bz2
+mime!application/gzip!extensions = gz
+mime!application/hta!extensions = hta
+mime!application/java-archive!extensions = jar
+mime!application/java-serialized-object!extensions = ser
+mime!application/java-vm!extensions = class
+mime!application/json!extensions = json
+mime!application/mac-binhex40!extensions = hqx
+mime!application/msaccess!extensions = mdb
+mime!application/msword!extensions = doc,dot
+mime!application/octet-stream!extensions = bin
+mime!application/octetstream!extensions = ace
+mime!application/oda!extensions = oda
+mime!application/ogg!extensions = ogx
+mime!application/pdf!extensions = pdf
+mime!application/pgp-keys!extensions = key
+mime!application/pgp-signature!extensions = pgp
+mime!application/pics-rules!extensions = prf
+mime!application/postscript!extensions = ps,ai,eps
+mime!application/rar!extensions = rar
+mime!application/rdf+xml!extensions = rdf
+mime!application/rss+xml!extensions = rss
+mime!application/smil!extensions = smi,smil
+mime!application/vnd.mozilla.xul+xml!extensions = xul
+mime!application/vnd.ms-excel!extensions = xls,xlb,xlt
+mime!application/vnd.ms-pki.seccat!extensions = cat
+mime!application/vnd.ms-pki.stl!extensions = stl
+mime!application/vnd.ms-powerpoint!extensions = ppt,pps
+mime!application/vnd.oasis.opendocument.chart!extensions = odc
+mime!application/vnd.oasis.opendocument.database!extensions = odb
+mime!application/vnd.oasis.opendocument.formula!extensions = odf
+mime!application/vnd.oasis.opendocument.graphics!extensions = odg
+mime!application/vnd.oasis.opendocument.image!extensions = odi
+mime!application/vnd.oasis.opendocument.presentation!extensions = odp
+mime!application/vnd.oasis.opendocument.spreadsheet!extensions = ods
+mime!application/vnd.oasis.opendocument.text!extensions = odt
+mime!application/vnd.oasis.opendocument.text-master!extensions = odm
+mime!application/vnd.oasis.opendocument.text-web!extensions = oth
+mime!application/vnd.pkg5.info!extensions = p5i
+mime!application/vnd.visio!extensions = vsd
+mime!application/vnd.wap.wbxml!extensions = wbxml
+mime!application/vnd.wap.wmlc!extensions = wmlc
+mime!application/vnd.wap.wmlscriptc!extensions = wmlsc
+mime!application/x-7z-compressed!extensions = 7z
+mime!application/x-abiword!extensions = abw
+mime!application/x-apple-diskimage!extensions = dmg
+mime!application/x-bcpio!extensions = bcpio
+mime!application/x-bittorrent!extensions = torrent
+mime!application/x-cdf!extensions = cdf
+mime!application/x-cpio!extensions = cpio
+mime!application/x-csh!extensions = csh
+mime!application/x-debian-package!extensions = deb,udeb
+mime!application/x-director!extensions = dcr,dir,dxr
+mime!application/x-dvi!extensions = dvi
+mime!application/x-flac!extensions = flac
+mime!application/x-font!extensions = pfa,pfb,gsf,pcf,pcf.Z
+mime!application/x-freemind!extensions = mm
+mime!application/x-gnumeric!extensions = gnumeric
+mime!application/x-gtar!extensions = gtar,tgz,taz
+mime!application/x-gzip!extensions = gz,tgz
+mime!application/x-httpd-php!extensions = phtml,pht,php
+mime!application/x-httpd-php-source!extensions = phps
+mime!application/x-httpd-php3!extensions = php3
+mime!application/x-httpd-php3-preprocessed!extensions = php3p
+mime!application/x-httpd-php4!extensions = php4
+mime!application/x-internet-signup!extensions = ins,isp
+mime!application/x-iphone!extensions = iii
+mime!application/x-iso9660-image!extensions = iso
+mime!application/x-java-jnlp-file!extensions = jnlp
+mime!application/x-javascript!extensions = js
+mime!application/x-kchart!extensions = chrt
+mime!application/x-killustrator!extensions = kil
+mime!application/x-koan!extensions = skp,skd,skt,skm
+mime!application/x-kpresenter!extensions = kpr,kpt
+mime!application/x-kspread!extensions = ksp
+mime!application/x-kword!extensions = kwd,kwt
+mime!application/x-latex!extensions = latex
+mime!application/x-lha!extensions = lha
+mime!application/x-lzh!extensions = lzh
+mime!application/x-lzx!extensions = lzx
+mime!application/x-ms-wmd!extensions = wmd
+mime!application/x-ms-wmz!extensions = wmz
+mime!application/x-msdos-program!extensions = com,exe,bat,dll
+mime!application/x-msi!extensions = msi
+mime!application/x-netcdf!extensions = nc
+mime!application/x-ns-proxy-autoconfig!extensions = pac
+mime!application/x-nwc!extensions = nwc
+mime!application/x-object!extensions = o
+mime!application/x-oz-application!extensions = oza
+mime!application/x-pkcs7-certreqresp!extensions = p7r
+mime!application/x-pkcs7-crl!extensions = crl
+mime!application/x-python-code!extensions = pyc,pyo
+mime!application/x-quicktimeplayer!extensions = qtl
+mime!application/x-redhat-package-manager!extensions = rpm
+mime!application/x-sh!extensions = sh
+mime!application/x-shar!extensions = shar
+mime!application/x-shockwave-flash!extensions = swf,swfl
+mime!application/x-stuffit!extensions = sit,sea
+mime!application/x-sv4cpio!extensions = sv4cpio
+mime!application/x-sv4crc!extensions = sv4crc
+mime!application/x-tar!extensions = tar
+mime!application/x-tcl!extensions = tcl
+mime!application/x-tex-pk!extensions = pk
+mime!application/x-texinfo!extensions = texinfo,texi
+mime!application/x-trash!extensions = ~,bak,old,sik
+mime!application/x-troff!extensions = t,tr,roff
+mime!application/x-troff-man!extensions = man
+mime!application/x-troff-me!extensions = me
+mime!application/x-troff-ms!extensions = ms
+mime!application/x-ustar!extensions = ustar
+mime!application/x-x509-ca-cert!extensions = crt
+mime!application/x-xcf!extensions = xcf
+mime!application/x-xfig!extensions = fig
+mime!application/x-xpinstall!extensions = xpi
+mime!application/xhtml+xml!extensions = xhtml,xht
+mime!application/xml!extensions = xml,xsl
+mime!application/zip!extensions = zip
+mime!audio/basic!extensions = au,snd
+mime!audio/midi!extensions = mid,midi,kar
+mime!audio/mpeg!extensions = mpga,mpega,mp2,mp3,m4a
+mime!audio/ogg!extensions = ogg,oga
+mime!audio/prs.sid!extensions = sid
+mime!audio/x-aiff!extensions = aif,aiff,aifc
+mime!audio/x-gsm!extensions = gsm
+mime!audio/x-mpegurl!extensions = m3u
+mime!audio/x-ms-wax!extensions = wax
+mime!audio/x-ms-wma!extensions = wma
+mime!audio/x-pn-realaudio!extensions = ra,rm,ram
+mime!audio/x-realaudio!extensions = ra
+mime!audio/x-scpls!extensions = pls
+mime!audio/x-sd2!extensions = sd2
+mime!audio/x-wav!extensions = wav
+mime!chemical/x-cache!extensions = cac,cache
+mime!chemical/x-cache-csf!extensions = csf
+mime!chemical/x-cdx!extensions = cdx
+mime!chemical/x-cif!extensions = cif
+mime!chemical/x-cmdf!extensions = cmdf
+mime!chemical/x-cml!extensions = cml
+mime!chemical/x-compass!extensions = cpa
+mime!chemical/x-crossfire!extensions = bsd
+mime!chemical/x-csml!extensions = csml,csm
+mime!chemical/x-ctx!extensions = ctx
+mime!chemical/x-cxf!extensions = cxf,cef
+mime!chemical/x-isostar!extensions = istr,ist
+mime!chemical/x-jcamp-dx!extensions = jdx,dx
+mime!chemical/x-kinemage!extensions = kin
+mime!chemical/x-pdb!extensions = pdb,ent
+mime!chemical/x-swissprot!extensions = sw
+mime!chemical/x-vamas-iso14976!extensions = vms
+mime!chemical/x-vmd!extensions = vmd
+mime!chemical/x-xtel!extensions = xtel
+mime!chemical/x-xyz!extensions = xyz
+mime!image/gif!extensions = gif
+mime!image/jpeg!extensions = jpeg,jpg,jpe
+mime!image/pcx!extensions = pcx
+mime!image/png!extensions = png
+mime!image/svg+xml!extensions = svg,svgz
+mime!image/tiff!extensions = tiff,tif
+mime!image/vnd.djvu!extensions = djvu,djv
+mime!image/vnd.wap.wbmp!extensions = wbmp
+mime!image/x-icon!extensions = ico
+mime!image/x-ms-bmp!extensions = bmp
+mime!image/x-photoshop!extensions = psd
+mime!image/x-portable-anymap!extensions = pnm
+mime!image/x-portable-bitmap!extensions = pbm
+mime!image/x-portable-graymap!extensions = pgm
+mime!image/x-portable-pixmap!extensions = ppm
+mime!image/x-xbitmap!extensions = xbm
+mime!image/x-xpixmap!extensions = xpm
+mime!image/x-xwindowdump!extensions = xwd
+mime!model/iges!extensions = igs,iges
+mime!model/mesh!extensions = msh,mesh,silo
+mime!model/vrml!extensions = wrl,vrml
+mime!text/calendar!extensions = ics,icz
+mime!text/comma-separated-values!extensions = csv
+mime!text/css!extensions = css
+mime!text/h323!extensions = 323
+mime!text/html!extensions = html,htm,shtml
+mime!text/iuls!extensions = uls
+mime!text/mathml!extensions = mml
+mime!text/plain!extensions = asc,txt,text,diff,pot
+mime!text/richtext!extensions = rtx
+mime!text/rtf!extensions = rtf
+mime!text/scriptlet!extensions = sct,wsc
+mime!text/tab-separated-values!extensions = tsv
+mime!text/vnd.sun.j2me.app-descriptor!extensions = jad
+mime!text/vnd.wap.wml!extensions = wml
+mime!text/vnd.wap.wmlscript!extensions = wmls
+mime!text/x-boo!extensions = boo
+mime!text/x-c++hdr!extensions = h++,hpp,hxx,hh
+mime!text/x-c++src!extensions = c++,cpp,cxx,cc
+mime!text/x-chdr!extensions = h
+mime!text/x-csh!extensions = csh
+mime!text/x-csrc!extensions = c
+mime!text/x-dsrc!extensions = d
+mime!text/x-haskell!extensions = hs
+mime!text/x-java!extensions = java
+mime!text/x-literate-haskell!extensions = lhs
+mime!text/x-moc!extensions = moc
+mime!text/x-pascal!extensions = p,pas
+mime!text/x-pcs-gcd!extensions = gcd
+mime!text/x-perl!extensions = pl,pm
+mime!text/x-python!extensions = py
+mime!text/x-setext!extensions = etx
+mime!text/x-sh!extensions = sh
+mime!text/x-tcl!extensions = tcl,tk
+mime!text/x-tex!extensions = tex,ltx,sty,cls
+mime!text/x-vcalendar!extensions = vcs
+mime!text/x-vcard!extensions = vcf
+mime!video/dl!extensions = dl
+mime!video/dv!extensions = dif,dv
+mime!video/fli!extensions = fli
+mime!video/gl!extensions = gl
+mime!video/mp4!extensions = mp4
+mime!video/mpeg!extensions = mpeg,mpg,mpe
+mime!video/ogg!extensions = ogv
+mime!video/quicktime!extensions = qt,mov
+mime!video/vnd.mpegurl!extensions = mxu
+mime!video/webm!extensions = webm
+mime!video/x-flv!extensions = flv
+mime!video/x-la-asf!extensions = lsf,lsx
+mime!video/x-mng!extensions = mng
+mime!video/x-ms-asf!extensions = asf,asx
+mime!video/x-ms-wm!extensions = wm
+mime!video/x-ms-wmv!extensions = wmv
+mime!video/x-ms-wmx!extensions = wmx
+mime!video/x-ms-wvx!extensions = wvx
+mime!video/x-msvideo!extensions = avi
+mime!video/x-sgi-movie!extensions = movie
+mime!x-conference/x-cooltalk!extensions = ice
+mime!x-world/x-vrml!extensions = vrm,vrml,wrl";
+
+	echo "${CHEROKEE_CONFIG}"> "${PWD}/srvr.cherokee.conf";
+
+	# Config seems to not respect... anything
+	#cherokee --detach --config "${PWD}/srvr.cherokee.conf" --documentroot "${PWD}" --port "${PORT}";
+	cherokee --detach --documentroot "${PWD}" --port "${PORT}";
+
+	open "http://localhost:${PORT}/";
+
+	return 0;
+}
+
+stop_server(){
+	# Kill Lighttpd
+	killall lighttpd > /dev/null 2> /dev/null;
+
+	# Kill nginx
+	if [ -f /usr/local/var/run/nginx.pid ];
+	then
+		kill -INT `cat /usr/local/var/run/nginx.pid` > /dev/null 2> /dev/null;
+	fi
+
+	# Kill Cherokee
+	if [ -f /usr/local/var/run/cherokee.pid ];
+	then
+		kill -INT `cat /usr/local/var/run/cherokee.pid` > /dev/null 2> /dev/null;
+	fi
+	killall cherokee > /dev/null 2> /dev/null;
+
+	return 0;
+}
+
+###############################################################################
+# Application and Library Tests
+###############################################################################
+get_platform(){
+	try_command "uname";
+
+	if [ $? -ne 0 ]; then
+		PLATFORM="dummy";
+		return 1;
+	fi
+
+	PLATFORM=`uname`;
+	PLATFORM_VERSION=`expr "$(sw_vers 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+
+	return 0;
+}
+
+check_xcode(){
+	try_command "defaults read /Developer/Applications/Xcode.app/Contents/Info CFBundleVersion";
+	RET=$?;
+
+	if [ $RET -ne 0 ]; then
+		return $RET;
+	fi
+
+	HAVE_XCODE=1;
+	BUILD=`expr "$(defaults read /Developer/Applications/Xcode.app/Contents/version CFBundleVersion 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+	VERSION=`expr "$(defaults read /Developer/Applications/Xcode.app/Contents/version CFBundleShortVersionString 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+	XCODE_VERSION="${VERSION} ${BUILD}";
+	return 0;
+}
+
+check_gcc(){
+	CMD="$CC -dumpversion";
+	try_command $CMD;
+
+	if [ $? -eq 0 ]; then
+		CC_VERSION=`$CMD`;
+		return 0;
+	fi
+
+	CC_VERSION=;
+
+	return 1;
+}
+
+check_macports(){
+	try_command "port version";
+	RET=$?;
+
+	if [ $RET -ne 0 ]; then
+		return $RET;
+	fi
+
+	HAVE_MACPORTS=1;
+	MACPORTS_VERSION=`expr "$(port version 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+
+	return 0;
+}
+
+check_git(){
+	try_command "git --version";
+	RET=$?;
+
+	if [ $RET -ne 0 ]; then
+		return $RET;
+	fi
+
+	HAVE_GIT=1;
+	GIT_VERSION=`expr "$(git --version 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+
+	return 0;
+}
+
+check_homebrew(){
+	try_command "brew -v";
+	RET=$?;
+
+	if [ $RET -ne 0 ]; then
+		return $RET;
+	fi
+
+	HAVE_HOMEBREW=1;
+	HOMEBREW_VERSION=`expr "$(brew -v 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+
+	return 0;
+}
+
+check_lighttpd(){
+	try_command "lighttpd -v";
+	RET=$?;
+
+	if [ $RET -ne 0 ]; then
+		return $RET;
+	fi
+
+	HAVE_LIGHTTPD=1;
+	LIGHTTPD_VERSION=`expr "$(lighttpd -v 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+
+	return 0;
+}
+
+check_nginx(){
+	try_command "nginx -v";
+	RET=$?;
+
+	if [ $RET -ne 0 ]; then
+		return $RET;
+	fi
+
+	HAVE_NGINX=1;
+	NGINX_VERSION=`expr "$(nginx -v 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+
+	return 0;
+}
+
+check_cherokee(){
+	try_command "cherokee --version";
+	RET=$?;
+
+	if [ $RET -ne 0 ]; then
+		return $RET;
+	fi
+
+	HAVE_CHEROKEE=1;
+	CHEROKEE_VERSION=`expr "$(cherokee --version 2>&1)" : "[^0-9]*\([0-9.]*\)"`;
+
+	return 0;
+}
+
+###############################################################################
+# Application and Library Installs and Setups
+###############################################################################
+install_homebrew(){
+	ruby -e "$(curl -fsSLk https://gist.github.com/raw/323731/install_homebrew.rb > /dev/null 2>&1)"
+	return 0;
+}
+
+###############################################################################
+# Runtime
+###############################################################################
+# Parse Args
+while [ -n "$1" ]; do
+	arg=`expr "$1" : "[^=]*=\(.*\)"`
+	case $1 in
+		--version | -v)
+			echo "${PROJECT} $VERSION";
+			exit 1;;
+
+		--help | -h)
+			usage;
+			exit 1;;
+
+		--doctor | -d)
+			doctor;
+			exit 1;;
+
+		--kill | -k)
+			stop_server;
+			exit 1;;
+
+		--install | -i)
+			install;
+			exit 1;;
+
+		--port | -p)
+			shift
+			PORT=$1;;
+
+		--server | -s)
+			shift
+			SERVER=$1;;
+		
+		\?)
+			usage;
+			exit 1;;
+	esac
+	shift;
+done;
+
+# Start the Server
+case $SERVER in
+	lighttpd)
+		echo "starting ${SERVER} ${LIGHTTPD_VERSION}";
+		start_lighttpd;;
+
+	nginx)
+		echo "starting ${SERVER} ${NGINX_VERSION}";
+		start_nginx;;
+
+	cherokee)
+		echo "starting ${SERVER} ${CHEROKEE_VERSION}";
+		start_cherokee;;
+
+	\?)
+		echo "invalid server: ${SERVER}";
+		exit 1;;
+esac
+
+exit 0;
