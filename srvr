@@ -54,6 +54,9 @@ HAVE_CHEROKEE=0;
 CHEROKEE_VERSION=;
 CHEROKEE_CONFIG="";
 
+HAVE_PAPERSERVE=0;
+PAPERSERVE_VERSION=;
+PAPERSERVE_VERSION="";
 
 ###############################################################################
 # Style Functions
@@ -168,9 +171,9 @@ usage(){
 	echo "  options [and defaults] are:"
 	echo "    -p | --port            the port to run the current server on, port 8000 by default"
 	echo "    -s | --server          which server to setup, lighttpd is used by default"
-	echo "    -k | --kill            stops any currently running ${PROJECT} servers"
 	echo "                               lighttpd, nginx, cherokee"
-	# , cherokee, jetty, yaws"
+	# paperserve, jetty, yaws
+	echo "    -k | --kill            stops any currently running ${PROJECT} servers"
 	echo "    -i | --install         installs almost everything needed to get a server running"
 	echo "    -d | --doctor          checks for missing dependencies and other issues"
 	echo "    -h | --help            shows this help screen"
@@ -657,6 +660,14 @@ mime!x-world/x-vrml!extensions = vrm,vrml,wrl";
 	return 0;
 }
 
+start_paperserve(){
+	echo "paperserve requires node and the index must be index.html";
+	open "http://localhost:${PORT}/";
+	paperserve -p  ${PORT};
+
+	return 0;
+}
+
 stop_server(){
 	# Kill Lighttpd
 	killall lighttpd > /dev/null 2> /dev/null;
@@ -811,8 +822,13 @@ check_cherokee(){
 # Application and Library Installs and Setups
 ###############################################################################
 install_homebrew(){
-	ruby -e "$(curl -fsSLk https://gist.github.com/raw/323731/install_homebrew.rb > /dev/null 2>&1)"
+	ruby -e "$(curl -fsSLk https://gist.github.com/raw/323731/install_homebrew.rb > /dev/null 2>&1)";
 	return 0;
+}
+
+install_npm(){
+	curl http://npmjs.org/install.sh | sh;
+	return 0;	
 }
 
 ###############################################################################
@@ -870,6 +886,10 @@ case $SERVER in
 	cherokee)
 		echo "starting ${SERVER} ${CHEROKEE_VERSION}";
 		start_cherokee;;
+
+	paperserve)
+		echo "starting ${SERVER} ${PAPERSERVE_VERSION}";
+		start_paperserve;;
 
 	\?)
 		echo "invalid server: ${SERVER}";
